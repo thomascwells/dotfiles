@@ -83,4 +83,49 @@ else
   fi
 fi
 
+
+# VSCode Extensions Installation for GitHub Codespaces --- 
+
+echo "Installing VSCode extensions..."
+
+# Array of extensions to install
+extensions=(
+    "mhutchie.git-graph"           # Git Graph - View git log graph
+    "ritwickdey.LiveServer"        # Live Server - Local development server with live reload
+    "DavidAnson.vscode-markdownlint" # Markdown linting and style checking
+)
+
+# Function to install an extension
+install_extension() {
+    local extension=$1
+    echo "Installing extension: $extension"
+
+    if code --install-extension "$extension" --force; then
+        echo "✓ Successfully installed: $extension"
+    else
+        echo "✗ Failed to install: $extension" >&2
+        return 1
+    fi
+}
+
+# Install each extension
+failed_count=0
+for extension in "${extensions[@]}"; do
+    if ! install_extension "$extension"; then
+        ((failed_count++))
+    fi
+done
+
+# Summary
+echo ""
+echo "Extension installation complete!"
+echo "Installed: $((${#extensions[@]} - failed_count)) extensions"
+if [ $failed_count -gt 0 ]; then
+    echo "Failed: $failed_count extensions"
+    exit 1
+fi
+
+echo "All extensions installed successfully!"
+
+
 echo "Setup complete!"
