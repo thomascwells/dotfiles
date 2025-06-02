@@ -1,7 +1,7 @@
 
 #!/bin/bash
 
-# Git autocompletion
+# Git autocompletion ----- 
 
 # Create directory for bash completions if it doesn't exist
 mkdir -p "$HOME/.bash_completion.d"
@@ -43,6 +43,8 @@ if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
   echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
   export PATH="$HOME/.local/bin:$PATH"
 fi
+
+# Install lazy git ---- 
 
 # Check if lazygit is already installed
 if command -v lazygit &> /dev/null; then
