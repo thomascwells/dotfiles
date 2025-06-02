@@ -1,6 +1,8 @@
 
 #!/bin/bash
 
+echo "Running thomascwells/bootstrap script..."
+
 # Git autocompletion ----- 
 
 # Create directory for bash completions if it doesn't exist
