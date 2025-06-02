@@ -88,44 +88,37 @@ fi
 
 echo "Installing VSCode extensions..."
 
-# Array of extensions to install
-extensions=(
-    "mhutchie.git-graph"           # Git Graph - View git log graph
-    "ritwickdey.LiveServer"        # Live Server - Local development server with live reload
-    "DavidAnson.vscode-markdownlint" # Markdown linting and style checking
-)
+# Wait for VSCode Server to be available
+echo "Waiting for VSCode Server to initialize..."
+max_attempts=30
+attempt=0
 
-# Function to install an extension
-install_extension() {
-    local extension=$1
-    echo "Installing extension: $extension"
-
-    if code --install-extension "$extension" --force; then
-        echo "✓ Successfully installed: $extension"
-    else
-        echo "✗ Failed to install: $extension" >&2
-        return 1
+while [ $attempt -lt $max_attempts ]; do
+    if command -v code &> /dev/null; then
+        echo "VSCode Server is ready!"
+        break
     fi
-}
-
-# Install each extension
-failed_count=0
-for extension in "${extensions[@]}"; do
-    if ! install_extension "$extension"; then
-        ((failed_count++))
-    fi
+    echo "Waiting... (attempt $((attempt + 1))/$max_attempts)"
+    sleep 2
+    ((attempt++))
 done
 
-# Summary
-echo ""
-echo "Extension installation complete!"
-echo "Installed: $((${#extensions[@]} - failed_count)) extensions"
-if [ $failed_count -gt 0 ]; then
-    echo "Failed: $failed_count extensions"
+if [ $attempt -eq $max_attempts ]; then
+    echo "Error: VSCode Server did not become available"
     exit 1
 fi
 
-echo "All extensions installed successfully!"
+# Now install extensions
+extensions=(
+    "mhutchie.git-graph"
+    "ritwickdey.LiveServer"
+    "DavidAnson.vscode-markdownlint"
+)
+
+for extension in "${extensions[@]}"; do
+    echo "Installing $extension..."
+    code --install-extension "$extension" --force
+done
 
 
 echo "Setup complete!"
