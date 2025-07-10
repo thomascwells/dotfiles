@@ -108,6 +108,10 @@ if [ $attempt -eq $max_attempts ]; then
     exit 1
 fi
 
+# Ensure VSCode has a moment to fully initialize
+sleep 5
+echo "Giving VSCode a moment to fully initialize..."
+
 # Now install extensions
 extensions=(
     "mhutchie.git-graph"
@@ -115,10 +119,35 @@ extensions=(
     "DavidAnson.vscode-markdownlint"
 )
 
+installed_count=0
+failed_count=0
+
 for extension in "${extensions[@]}"; do
     echo "Installing $extension..."
-    code --install-extension "$extension" --force
+    if code --install-extension "$extension" --force; then
+        echo "Successfully installed $extension"
+        ((installed_count++))
+    else
+        echo "Failed to install $extension"
+        ((failed_count++))
+    fi
+    
+    # Give VSCode a moment to process each extension installation
+    sleep 2
 done
+
+echo "Extension installation complete: $installed_count installed, $failed_count failed"
+
+# Try to reload window or restart VSCode extensions host
+if [ $installed_count -gt 0 ]; then
+    echo "Attempting to reload VSCode extensions..."
+    # Try to reload window (this may not work in all environments)
+    code --reload-window 2>/dev/null || true
+    
+    # Alternative: send a message to reload extensions
+    echo "Extensions installed. You may need to reload VSCode window to activate them."
+    echo "You can reload by pressing F1 and typing 'Reload Window' or 'Developer: Restart Extension Host'"
+fi
 
 
 echo "Setup complete!"
