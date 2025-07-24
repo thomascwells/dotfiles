@@ -83,70 +83,100 @@ else
   fi
 fi
 
+# GPG Configuration for Git Signing ----
+
+# Ensure GPG directory exists with proper permissions
+mkdir -p "$HOME/.gnupg"
+chmod 700 "$HOME/.gnupg"
+
+# Configure GPG agent for better passphrase caching
+GPG_AGENT_CONF="$HOME/.gnupg/gpg-agent.conf"
+if [ ! -f "$GPG_AGENT_CONF" ]; then
+    echo "Configuring GPG agent for better passphrase handling..."
+    cat > "$GPG_AGENT_CONF" << 'EOF'
+# GPG Agent configuration for better passphrase handling
+
+# Cache passphrases for 8 hours (28800 seconds)
+default-cache-ttl 28800
+# Maximum cache time is 24 hours (86400 seconds)  
+max-cache-ttl 86400
+
+# Enable pinentry for GUI/terminal prompts
+pinentry-program /usr/bin/pinentry-gtk-3
+
+# Allow loopback pinentry for programmatic access
+allow-loopback-pinentry
+EOF
+    
+    # Reload GPG agent with new configuration
+    gpgconf --reload gpg-agent 2>/dev/null || true
+    echo "GPG agent configured for better passphrase caching"
+fi
+
+# Set up GPG_TTY for terminal signing
+if ! grep -q "export GPG_TTY" "$HOME/.bashrc"; then
+    echo "Adding GPG_TTY configuration to .bashrc..."
+    echo "" >> "$HOME/.bashrc"
+    echo "# GPG configuration for signing" >> "$HOME/.bashrc"
+    echo "export GPG_TTY=\$(tty)" >> "$HOME/.bashrc"
+fi
+
+# Export GPG_TTY for current session
+export GPG_TTY=$(tty)
 
 # VSCode Extensions Installation for GitHub Codespaces --- 
 
-echo "Installing VSCode extensions..."
-
-# Wait for VSCode Server to be available
-echo "Waiting for VSCode Server to initialize..."
-max_attempts=30
-attempt=0
-
-while [ $attempt -lt $max_attempts ]; do
-    if command -v code &> /dev/null; then
-        echo "VSCode Server is ready!"
-        break
-    fi
-    echo "Waiting... (attempt $((attempt + 1))/$max_attempts)"
-    sleep 2
-    ((attempt++))
-done
-
-if [ $attempt -eq $max_attempts ]; then
-    echo "Error: VSCode Server did not become available"
-    exit 1
-fi
-
-# Ensure VSCode has a moment to fully initialize
-sleep 5
-echo "Giving VSCode a moment to fully initialize..."
-
-# Now install extensions
-extensions=(
-    "mhutchie.git-graph"
-    "ritwickdey.LiveServer"
-    "DavidAnson.vscode-markdownlint"
-)
-
-installed_count=0
-failed_count=0
-
-for extension in "${extensions[@]}"; do
-    echo "Installing $extension..."
-    if code --install-extension "$extension" --force; then
-        echo "Successfully installed $extension"
-        ((installed_count++))
+# Check if we're in a Codespace or have VSCode available
+if ! command -v code &> /dev/null; then
+    echo "VSCode CLI not available, skipping extension installation"
+else
+    # Create a marker file to prevent repeated extension installations
+    VSCODE_SETUP_MARKER="$HOME/.vscode_extensions_installed"
+    
+    if [ -f "$VSCODE_SETUP_MARKER" ]; then
+        echo "VSCode extensions already installed (marker file exists)"
     else
-        echo "Failed to install $extension"
-        ((failed_count++))
+        echo "Installing VSCode extensions..."
+        
+        # Define extensions to install
+        extensions=(
+            "mhutchie.git-graph"
+            "ritwickdey.LiveServer"
+            "DavidAnson.vscode-markdownlint"
+        )
+        
+        installed_count=0
+        failed_count=0
+        
+        for extension in "${extensions[@]}"; do
+            # Check if extension is already installed
+            if code --list-extensions | grep -q "^$extension$"; then
+                echo "$extension is already installed"
+                ((installed_count++))
+            else
+                echo "Installing $extension..."
+                if code --install-extension "$extension" --force; then
+                    echo "Successfully installed $extension"
+                    ((installed_count++))
+                else
+                    echo "Failed to install $extension"
+                    ((failed_count++))
+                fi
+            fi
+        done
+        
+        echo "Extension installation complete: $installed_count installed, $failed_count failed"
+        
+        # Create marker file to prevent future installations
+        touch "$VSCODE_SETUP_MARKER"
+        echo "Created marker file to prevent repeated extension installations"
+        
+        # Only suggest reload if we actually installed new extensions
+        if [ $failed_count -eq 0 ] && [ $installed_count -gt 0 ]; then
+            echo "Extensions installed successfully. You may need to reload VSCode window to activate new extensions."
+            echo "You can reload by pressing F1 and typing 'Reload Window'"
+        fi
     fi
-    
-    # Give VSCode a moment to process each extension installation
-    sleep 2
-done
-
-echo "Extension installation complete: $installed_count installed, $failed_count failed"
-
-# Try to reload window or restart VSCode extensions host
-if [ $installed_count -gt 0 ]; then
-    echo "Attempting to reload VSCode extensions..."
-    # Try to reload window (this may not work in all environments)
-    code --reload-window 2>/dev/null || true
-    
-    # Alternative: send a message to reload extensions
-    echo "Extensions installed. You may need to reload VSCode window to activate them."
-    echo "You can reload by pressing F1 and typing 'Reload Window' or 'Developer: Restart Extension Host'"
 fi
 
 
