@@ -89,6 +89,67 @@ else
   fi
 fi
 
+# Install GitHub CLI (gh) ----
+
+# Check if gh is already installed
+if command -v gh &> /dev/null; then
+  echo "GitHub CLI is already installed at $(which gh), version $(gh --version | head -n1)"
+else
+  # Install GitHub CLI
+  echo "GitHub CLI not found. Installing..."
+  
+  # Get the latest release version
+  GH_VERSION=$(curl -s "https://api.github.com/repos/cli/cli/releases/latest" | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/')
+  
+  if [ -z "$GH_VERSION" ]; then
+    echo "Error: Failed to get latest GitHub CLI version. Check your internet connection."
+    exit 1
+  fi
+  
+  echo "Downloading GitHub CLI version ${GH_VERSION}..."
+  curl -Lo gh.tar.gz "https://github.com/cli/cli/releases/latest/download/gh_${GH_VERSION}_linux_amd64.tar.gz"
+  
+  if [ $? -ne 0 ] || [ ! -s gh.tar.gz ]; then
+    echo "Error: Failed to download GitHub CLI."
+    exit 1
+  fi
+  
+  tar xf gh.tar.gz
+  echo "Installing GitHub CLI to $HOME/.local/bin/"
+  mv "gh_${GH_VERSION}_linux_amd64/bin/gh" "$HOME/.local/bin/"
+  chmod +x "$HOME/.local/bin/gh"
+  rm -rf gh.tar.gz "gh_${GH_VERSION}_linux_amd64"
+  
+  # Verify installation
+  if command -v gh &> /dev/null; then
+    echo "GitHub CLI installed successfully!"
+  else
+    echo "Installation failed. Please check if $HOME/.local/bin is in your PATH."
+    exit 1
+  fi
+fi
+
+# Install GitHub CLI act extension ----
+
+# Check if gh is available before trying to install extensions
+if command -v gh &> /dev/null; then
+  echo "Checking for gh act extension..."
+  
+  # Check if act extension is already installed
+  if gh extension list | grep -q "nektos/gh-act"; then
+    echo "GitHub CLI act extension is already installed"
+  else
+    echo "Installing GitHub CLI act extension..."
+    if gh extension install https://github.com/nektos/gh-act; then
+      echo "GitHub CLI act extension installed successfully!"
+    else
+      echo "Warning: Failed to install GitHub CLI act extension. You may need to authenticate with 'gh auth login' first."
+    fi
+  fi
+else
+  echo "Warning: GitHub CLI not available, skipping act extension installation"
+fi
+
 # GPG Configuration for Git Signing ----
 
 # Ensure GPG directory exists with proper permissions
