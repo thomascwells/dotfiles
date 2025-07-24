@@ -1,0 +1,12 @@
+[
+  {
+    "command": "workbench.action.toggleMaximizedPanel",
+    "key": "ctrl+alt+`",
+    "when": "panelAlignment == 'center' || panelPosition != 'bottom' && panelPosition != 'top'"
+  },
+  {
+    "key": "ctrl+w",
+    "command": "workbench.action.terminal.killEditor",
+    "when": "terminalFocus && terminalProcessSupported && resourceScheme == 'vscode-terminal'"
+  }
+]
