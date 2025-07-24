@@ -6,5 +6,13 @@
   {
     "command": "workbench.action.selectTheme",
     "key": "ctrl+k ctrl+t"
+  },
+  {
+    "command": "workbench.action.showCommands",
+    "key": "ctrl+shift+p"
+  },
+  {
+    "command": "explorer.newFile",
+    "key": "ctrl+alt+n"
   }
 ]
