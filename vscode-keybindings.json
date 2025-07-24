@@ -1,1 +1,10 @@
-[]
+[
+  {
+    "command": "workbench.action.terminal.new",
+    "key": "ctrl+shift+t"
+  },
+  {
+    "command": "workbench.action.selectTheme",
+    "key": "ctrl+k ctrl+t"
+  }
+]
