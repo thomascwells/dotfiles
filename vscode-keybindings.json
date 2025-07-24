@@ -7,6 +7,6 @@
   {
     "command": "workbench.action.terminal.kill",
     "key": "ctrl+w",
-    "when": "terminalFocus"
+    "when": "terminalFocus && !terminalTextSelected"
   }
 ]
