@@ -1,4 +1,3 @@
-
 #!/bin/bash
 
 echo "Running thomascwells/bootstrap script..."
@@ -244,6 +243,236 @@ else
             echo "You can reload by pressing F1 and typing 'Reload Window'"
         fi
     fi
+fi
+
+# VSCode Keyboard Shortcuts Sync ----
+
+sync_vscode_keybindings() {
+    local keybindings_file="$HOME/.config/Code/User/keybindings.json"
+    local backup_file="$HOME/.config/Code/User/keybindings.json.backup"
+    local repo_keybindings="vscode-keybindings.json"
+    local temp_merged="/tmp/keybindings_merged.json"
+    local hostname=$(hostname)
+    local branch_name="keybindings-sync-${hostname}-$(date +%Y%m%d-%H%M%S)"
+    
+    echo "Starting VSCode keyboard shortcuts sync..."
+    
+    # Ensure VSCode User directory exists
+    mkdir -p "$(dirname "$keybindings_file")"
+    
+    # Initialize empty keybindings if file doesn't exist
+    if [ ! -f "$keybindings_file" ]; then
+        echo "[]" > "$keybindings_file"
+        echo "Created empty keybindings.json file"
+    fi
+    
+    # Backup current keybindings
+    cp "$keybindings_file" "$backup_file"
+    echo "Backed up current keybindings to $(basename "$backup_file")"
+    
+    # Get current script directory (where the dotfiles repo is)
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local repo_keybindings_path="$script_dir/$repo_keybindings"
+    
+    # Check if canonical keybindings file exists in repo
+    if [ ! -f "$repo_keybindings_path" ]; then
+        echo "No canonical keybindings file found. Creating initial version from current settings..."
+        cp "$keybindings_file" "$repo_keybindings_path"
+        
+        # Commit the initial keybindings file
+        cd "$script_dir"
+        if git status --porcelain | grep -q "$repo_keybindings"; then
+            git add "$repo_keybindings"
+            git commit -m "Initial VSCode keybindings configuration from $(hostname)"
+            echo "Initial keybindings committed to repository"
+        fi
+        return 0
+    fi
+    
+    # Compare and merge keybindings using Python for JSON handling
+    python3 -c "
+import json
+import sys
+import os
+
+def load_json_safe(filepath):
+    try:
+        with open(filepath, 'r') as f:
+            content = f.read().strip()
+            if not content:
+                return []
+            return json.loads(content)
+    except (json.JSONDecodeError, FileNotFoundError):
+        return []
+
+def save_json(data, filepath):
+    with open(filepath, 'w') as f:
+        json.dump(data, f, indent=2, sort_keys=True)
+
+def find_conflicts(local_bindings, repo_bindings):
+    conflicts = []
+    local_keys = {binding.get('key'): binding for binding in local_bindings if 'key' in binding}
+    repo_keys = {binding.get('key'): binding for binding in repo_bindings if 'key' in binding}
+    
+    for key, local_binding in local_keys.items():
+        if key in repo_keys:
+            repo_binding = repo_keys[key]
+            if local_binding.get('command') != repo_binding.get('command'):
+                conflicts.append({
+                    'key': key,
+                    'local': local_binding,
+                    'repo': repo_binding
+                })
+    return conflicts
+
+def merge_keybindings(local_bindings, repo_bindings):
+    # Create dictionaries for easy lookup
+    repo_dict = {binding.get('key'): binding for binding in repo_bindings if 'key' in binding}
+    local_dict = {binding.get('key'): binding for binding in local_bindings if 'key' in binding}
+    
+    # Start with local bindings as base (user's current preferences take priority)
+    merged = list(local_bindings)
+    
+    # Add repo bindings that don't exist locally (new shortcuts from other machines)
+    for binding in repo_bindings:
+        key = binding.get('key')
+        if key and key not in local_dict:
+            merged.append(binding)
+    
+    return merged
+
+# Load files
+local_file = '$keybindings_file'
+repo_file = '$repo_keybindings_path'
+merged_file = '$temp_merged'
+
+local_bindings = load_json_safe(local_file)
+repo_bindings = load_json_safe(repo_file)
+
+# Find conflicts
+conflicts = find_conflicts(local_bindings, repo_bindings)
+
+if conflicts:
+    print(f'CONFLICTS_FOUND:{len(conflicts)}')
+    for conflict in conflicts:
+        print(f'CONFLICT: Key \"{conflict[\"key\"]}\" - Local: {conflict[\"local\"].get(\"command\", \"unknown\")} vs Repo: {conflict[\"repo\"].get(\"command\", \"unknown\")}')
+else:
+    # No conflicts, merge and save
+    merged = merge_keybindings(local_bindings, repo_bindings)
+    save_json(merged, merged_file)
+    print('MERGE_SUCCESS')
+" > /tmp/keybindings_merge_result.txt
+
+    local merge_result=$(cat /tmp/keybindings_merge_result.txt)
+    
+    if [[ "$merge_result" == *"CONFLICTS_FOUND"* ]]; then
+        echo ""
+        echo "⚠️  Keyboard shortcut conflicts detected!"
+        echo "Conflicts found:"
+        grep "CONFLICT:" /tmp/keybindings_merge_result.txt
+        echo ""
+        
+        # Create a new branch for conflict resolution
+        cd "$script_dir"
+        
+        # Ensure we're on main and up to date
+        git checkout main 2>/dev/null || true
+        git pull origin main 2>/dev/null || echo "Could not pull latest changes"
+        
+        # Create new branch
+        git checkout -b "$branch_name"
+        
+        # Copy current local keybindings to a conflict resolution file
+        cp "$keybindings_file" "$script_dir/keybindings-${hostname}.json"
+        git add "keybindings-${hostname}.json"
+        
+        # Create conflict resolution documentation
+        cat > "$script_dir/KEYBINDINGS_CONFLICT_${hostname}.md" << EOF
+# Keyboard Shortcuts Conflict Resolution
+
+**Machine:** ${hostname}
+**Date:** $(date)
+**Branch:** ${branch_name}
+
+## Conflicts Detected
+
+$(grep "CONFLICT:" /tmp/keybindings_merge_result.txt)
+
+## Files
+
+- \`keybindings-${hostname}.json\` - Local keybindings from ${hostname}
+- \`vscode-keybindings.json\` - Canonical/repository keybindings
+
+## Resolution Steps
+
+1. Review the conflicts above
+2. Manually merge the files, choosing the preferred keybinding for each conflict
+3. Update \`vscode-keybindings.json\` with the resolved bindings
+4. Delete this conflict file and the machine-specific file
+5. Commit and create a pull request
+
+## Auto-generated Merge Command
+
+\`\`\`bash
+# After resolving conflicts manually, run:
+git add vscode-keybindings.json
+git commit -m "Resolve keybinding conflicts from ${hostname}"
+git push -u origin ${branch_name}
+gh pr create --title "Resolve VSCode keybinding conflicts from ${hostname}" --body "Auto-generated PR to resolve keyboard shortcut conflicts"
+\`\`\`
+EOF
+        
+        git add "KEYBINDINGS_CONFLICT_${hostname}.md"
+        git commit -m "Keybinding conflicts detected on ${hostname} - manual resolution required"
+        
+        if command -v gh &> /dev/null; then
+            git push -u origin "$branch_name" 2>/dev/null || echo "Could not push branch (authentication may be required)"
+            gh pr create --title "Resolve VSCode keybinding conflicts from ${hostname}" \
+                        --body "Auto-generated PR to resolve keyboard shortcut conflicts detected on ${hostname}. See KEYBINDINGS_CONFLICT_${hostname}.md for details." \
+                        2>/dev/null || echo "Could not create PR (authentication may be required)"
+            echo "Created branch '$branch_name' and pull request for manual conflict resolution"
+        else
+            echo "Created branch '$branch_name' for manual conflict resolution"
+            echo "Push the branch and create a PR manually when ready"
+        fi
+        
+        echo "Please resolve conflicts manually and merge the PR when ready"
+        
+    elif [[ "$merge_result" == *"MERGE_SUCCESS"* ]]; then
+        echo "✅ No conflicts found. Merging keybindings..."
+        
+        # Apply merged keybindings
+        cp "$temp_merged" "$keybindings_file"
+        echo "Applied merged keybindings to local VSCode"
+        
+        # Check if there are new bindings to commit back to repo
+        if ! cmp -s "$keybindings_file" "$repo_keybindings_path"; then
+            cp "$keybindings_file" "$repo_keybindings_path"
+            
+            cd "$script_dir"
+            if git status --porcelain | grep -q "$repo_keybindings"; then
+                git add "$repo_keybindings"
+                git commit -m "Update VSCode keybindings from ${hostname}"
+                git push origin main 2>/dev/null || echo "Could not push changes (authentication may be required)"
+                echo "✅ Updated canonical keybindings and pushed to repository"
+            fi
+        else
+            echo "✅ Local keybindings are already in sync with repository"
+        fi
+    else
+        echo "❌ Error during keybindings merge. Check the merge result:"
+        cat /tmp/keybindings_merge_result.txt
+    fi
+    
+    # Cleanup
+    rm -f "$temp_merged" /tmp/keybindings_merge_result.txt
+}
+
+# Run VSCode keybindings sync if VSCode is available
+if command -v code &> /dev/null && [ -n "$DISPLAY" -o -n "$WAYLAND_DISPLAY" -o -n "$WSL_DISTRO_NAME" ]; then
+    sync_vscode_keybindings
+else
+    echo "VSCode not available or no display detected, skipping keybindings sync"
 fi
 
 

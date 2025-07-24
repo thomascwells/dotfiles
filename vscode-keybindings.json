@@ -1,18 +1,8 @@
+// Place your key bindings in this file to override the defaults
 [
-  {
-    "command": "workbench.action.terminal.new",
-    "key": "ctrl+shift+t"
-  },
-  {
-    "command": "workbench.action.selectTheme",
-    "key": "ctrl+k ctrl+t"
-  },
-  {
-    "command": "workbench.action.showCommands",
-    "key": "ctrl+shift+p"
-  },
-  {
-    "command": "explorer.newFile",
-    "key": "ctrl+alt+n"
-  }
+    {
+        "key": "ctrl+alt+`",
+        "command": "workbench.action.toggleMaximizedPanel",
+        "when": "panelAlignment == 'center' || panelPosition != 'bottom' && panelPosition != 'top'"
+    }
 ]
