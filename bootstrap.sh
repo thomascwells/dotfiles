@@ -101,8 +101,8 @@ default-cache-ttl 28800
 # Maximum cache time is 24 hours (86400 seconds)  
 max-cache-ttl 86400
 
-# Enable pinentry for GUI/terminal prompts
-pinentry-program /usr/bin/pinentry-gtk-3
+# Use curses-based pinentry for terminal compatibility
+pinentry-program /usr/bin/pinentry-curses
 
 # Allow loopback pinentry for programmatic access
 allow-loopback-pinentry
