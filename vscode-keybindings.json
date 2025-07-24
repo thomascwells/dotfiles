@@ -3,5 +3,10 @@
     "command": "workbench.action.toggleMaximizedPanel",
     "key": "ctrl+alt+`",
     "when": "panelAlignment == 'center' || panelPosition != 'bottom' && panelPosition != 'top'"
+  },
+  {
+    "command": "workbench.action.terminal.kill",
+    "key": "ctrl+w",
+    "when": "terminalFocus"
   }
 ]
