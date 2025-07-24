@@ -39,10 +39,16 @@ source "$HOME/.bash_completion.d/git-completion.bash"
 # Ensure ~/.local/bin exists
 mkdir -p "$HOME/.local/bin"
 
-# Add ~/.local/bin to PATH if not already there
-if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+# Add ~/.local/bin to PATH if not already in .bashrc
+if ! grep -q 'export PATH="$HOME/.local/bin:$PATH"' "$HOME/.bashrc"; then
   echo "Adding ~/.local/bin to PATH in .bashrc..."
+  echo '' >> "$HOME/.bashrc"
+  echo '# Add ~/.local/bin to PATH' >> "$HOME/.bashrc"
   echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
+fi
+
+# Export for current session if not already in PATH
+if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
   export PATH="$HOME/.local/bin:$PATH"
 fi
 
