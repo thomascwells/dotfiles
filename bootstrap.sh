@@ -47,6 +47,8 @@ if ! grep -q 'export PATH="$HOME/.local/bin:$PATH"' "$HOME/.bashrc"; then
   echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
 fi
 
+
+
 # Export for current session if not already in PATH
 if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
   export PATH="$HOME/.local/bin:$PATH"
@@ -248,3 +250,19 @@ fi
 
 
 echo "Setup complete!"
+
+# Install git-cleanup-branches script ----
+
+echo "Installing git-cleanup-branches script..."
+
+# Download the latest version from GitHub
+SCRIPT_URL="https://raw.githubusercontent.com/thomascwells/dotfiles/main/bin/git-cleanup-branches"
+INSTALL_PATH="$HOME/.local/bin/git-cleanup-branches"
+
+if curl -fsSL "$SCRIPT_URL" -o "$INSTALL_PATH"; then
+    chmod +x "$INSTALL_PATH"
+    echo "✓ git-cleanup-branches installed successfully to $INSTALL_PATH"
+else
+    echo "Warning: Failed to download git-cleanup-branches script"
+fi
+
