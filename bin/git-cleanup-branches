@@ -5,6 +5,7 @@
 # 1. LOCAL: Branches where the remote tracking branch is gone (deleted)
 # 2. LOCAL: Branches with no unique commits compared to origin/main
 # 3. REMOTE: Branches that have been merged into origin/main
+# 4. REMOTE: Branches with merged PRs (detected via GitHub CLI)
 #
 # Usage:
 #   git-cleanup-branches                    # List candidates (dry run)
@@ -22,11 +23,18 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 MAGENTA='\033[0;35m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 MODE="${1:-list}"
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 MAIN_BRANCH="origin/main"
+
+# Check if gh CLI is available
+GH_AVAILABLE=false
+if command -v gh &> /dev/null && gh auth status &> /dev/null; then
+    GH_AVAILABLE=true
+fi
 
 # Update remote tracking information
 echo -e "${BLUE}Fetching and pruning remote tracking branches...${NC}"
@@ -40,6 +48,7 @@ echo ""
 declare -a GONE_BRANCHES=()
 declare -a NO_DIFF_BRANCHES=()
 declare -a MERGED_REMOTE_BRANCHES=()
+declare -a PR_MERGED_BRANCHES=()
 
 # Only find local branches if not in remote-only mode
 if [[ "$MODE" != "--remote" ]] && [[ "$MODE" != "--delete-remote" ]] && [[ "$MODE" != "--force-remote" ]]; then
@@ -91,7 +100,11 @@ if [[ "$MODE" != "--remote" ]] && [[ "$MODE" != "--delete-remote" ]] && [[ "$MOD
     done < <(git for-each-ref --sort=committerdate --format='%(committerdate:short) %(refname:short)' refs/heads/ || true)
 fi
 
-# Always find merged remote branches
+# Find merged remote branches and branches with merged PRs
+if [[ "$GH_AVAILABLE" == true ]]; then
+    echo -e "${CYAN}Checking for merged PRs via GitHub CLI...${NC}"
+fi
+
 while IFS= read -r line; do
     date=$(echo "$line" | awk '{print $1}')
     branch=$(echo "$line" | awk '{print $2}')
@@ -101,24 +114,54 @@ while IFS= read -r line; do
         continue
     fi
     
-    # Check if branch is merged into origin/main
-    if git branch -r --merged "$MAIN_BRANCH" 2>/dev/null | grep -q "^  ${branch}$"; then
-        MERGED_REMOTE_BRANCHES+=("$date $branch")
+    # Extract branch name without origin/ prefix
+    branch_name="${branch#origin/}"
+    
+    # Check if branch has a merged PR (using gh CLI)
+    pr_merged=false
+    if [[ "$GH_AVAILABLE" == true ]]; then
+        pr_state=$(gh pr list --state all --head "$branch_name" --json state --jq '.[0].state' 2>/dev/null || echo "")
+        if [[ "$pr_state" == "MERGED" ]]; then
+            pr_merged=true
+            PR_MERGED_BRANCHES+=("$date $branch")
+            continue
+        fi
+    fi
+    
+    # Check if branch is merged into origin/main (only if not already found via PR)
+    if [[ "$pr_merged" == false ]]; then
+        if git branch -r --merged "$MAIN_BRANCH" 2>/dev/null | grep -q "^  ${branch}$"; then
+            MERGED_REMOTE_BRANCHES+=("$date $branch")
+        fi
     fi
 done < <(git for-each-ref --sort=committerdate --format='%(committerdate:short) %(refname:short)' refs/remotes/origin/ || true)
 
 # Display results based on mode
 if [[ "$MODE" == "--remote" ]] || [[ "$MODE" == "--delete-remote" ]] || [[ "$MODE" == "--force-remote" ]]; then
     # Only show remote branches
+    total_remote=$((${#MERGED_REMOTE_BRANCHES[@]} + ${#PR_MERGED_BRANCHES[@]}))
+    
+    if [[ ${#PR_MERGED_BRANCHES[@]} -gt 0 ]]; then
+        echo -e "${CYAN}Remote branches with merged PRs (${#PR_MERGED_BRANCHES[@]}) - sorted by commit date:${NC}"
+        for line in "${PR_MERGED_BRANCHES[@]}"; do
+            date=$(echo "$line" | awk '{print $1}')
+            branch=$(echo "$line" | awk '{print $2}')
+            echo "  $date - $branch"
+        done
+        echo ""
+    fi
+    
     if [[ ${#MERGED_REMOTE_BRANCHES[@]} -gt 0 ]]; then
-        echo -e "${MAGENTA}Merged remote branches (${#MERGED_REMOTE_BRANCHES[@]}) - sorted by commit date:${NC}"
+        echo -e "${MAGENTA}Remote branches merged into origin/main (${#MERGED_REMOTE_BRANCHES[@]}) - sorted by commit date:${NC}"
         for line in "${MERGED_REMOTE_BRANCHES[@]}"; do
             date=$(echo "$line" | awk '{print $1}')
             branch=$(echo "$line" | awk '{print $2}')
             echo "  $date - $branch"
         done
         echo ""
-    else
+    fi
+    
+    if [[ $total_remote -eq 0 ]]; then
         echo -e "${GREEN}No merged remote branches found that can be safely deleted.${NC}"
     fi
 else
@@ -143,7 +186,18 @@ else
         echo ""
     fi
     
-    # Also show remote branches in default mode
+    # Show remote branches
+    if [[ ${#PR_MERGED_BRANCHES[@]} -gt 0 ]]; then
+        echo -e "${CYAN}REMOTE: Branches with merged PRs (${#PR_MERGED_BRANCHES[@]}) - sorted by commit date:${NC}"
+        echo -e "${CYAN}(Use --remote, --delete-remote, or --force-remote to manage these)${NC}"
+        for line in "${PR_MERGED_BRANCHES[@]}"; do
+            date=$(echo "$line" | awk '{print $1}')
+            branch=$(echo "$line" | awk '{print $2}')
+            echo "  $date - $branch"
+        done
+        echo ""
+    fi
+    
     if [[ ${#MERGED_REMOTE_BRANCHES[@]} -gt 0 ]]; then
         echo -e "${MAGENTA}REMOTE: Merged into origin/main (${#MERGED_REMOTE_BRANCHES[@]}) - sorted by commit date:${NC}"
         echo -e "${MAGENTA}(Use --remote, --delete-remote, or --force-remote to manage these)${NC}"
@@ -171,8 +225,14 @@ if [[ ${#NO_DIFF_BRANCHES[@]} -gt 0 ]]; then
     done
 fi
 
-# Extract remote branch names
+# Extract remote branch names (combine both categories)
 ALL_REMOTE_BRANCHES=()
+if [[ ${#PR_MERGED_BRANCHES[@]} -gt 0 ]]; then
+    for line in "${PR_MERGED_BRANCHES[@]}"; do
+        branch=$(echo "$line" | awk '{print $NF}')
+        ALL_REMOTE_BRANCHES+=("$branch")
+    done
+fi
 if [[ ${#MERGED_REMOTE_BRANCHES[@]} -gt 0 ]]; then
     for line in "${MERGED_REMOTE_BRANCHES[@]}"; do
         branch=$(echo "$line" | awk '{print $NF}')
