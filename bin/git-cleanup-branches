@@ -1,19 +1,14 @@
 #!/usr/bin/env bash
-# git-cleanup-branches - Find and optionally delete local and remote branches that can be safely removed
+# git-cleanup-branches - Find and optionally delete local branches that can be safely removed
 # 
 # This script identifies:
 # 1. LOCAL: Branches where the remote tracking branch is gone (deleted)
 # 2. LOCAL: Branches with no unique commits compared to origin/main
-# 3. REMOTE: Branches that have been merged into origin/main
-# 4. REMOTE: Branches with merged PRs (detected via GitHub CLI)
 #
 # Usage:
-#   git-cleanup-branches                    # List candidates (dry run)
-#   git-cleanup-branches --delete           # Interactively delete local branches
-#   git-cleanup-branches --force            # Delete all local branches without prompting
-#   git-cleanup-branches --remote           # Show merged remote branches only
-#   git-cleanup-branches --delete-remote    # Interactively delete merged remote branches
-#   git-cleanup-branches --force-remote     # Delete all merged remote branches without prompting
+#   git-cleanup-branches          # List candidates (dry run)
+#   git-cleanup-branches --delete # Interactively delete each branch
+#   git-cleanup-branches --force  # Delete all branches without prompting
 
 set -euo pipefail
 
@@ -22,235 +17,121 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-MAGENTA='\033[0;35m'
-CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 MODE="${1:-list}"
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 MAIN_BRANCH="origin/main"
 
-# Check if gh CLI is available
-GH_AVAILABLE=false
-if command -v gh &> /dev/null && gh auth status &> /dev/null; then
-    GH_AVAILABLE=true
-fi
-
 # Update remote tracking information
 echo -e "${BLUE}Fetching and pruning remote tracking branches...${NC}"
 git fetch --prune --quiet
 
 echo ""
-echo -e "${GREEN}=== Branches Safe to Delete ===${NC}"
+echo -e "${GREEN}=== Local Branches Safe to Delete ===${NC}"
 echo ""
 
 # Arrays to store branches by category
 declare -a GONE_BRANCHES=()
 declare -a NO_DIFF_BRANCHES=()
-declare -a MERGED_REMOTE_BRANCHES=()
-declare -a PR_MERGED_BRANCHES=()
 
-# Only find local branches if not in remote-only mode
-if [[ "$MODE" != "--remote" ]] && [[ "$MODE" != "--delete-remote" ]] && [[ "$MODE" != "--force-remote" ]]; then
-    # Find branches where remote is gone (sorted by commit date, oldest first)
-    while IFS= read -r line; do
-        # Extract just the branch name from the format output
-        branch=$(echo "$line" | awk '{print $NF}')
-        # Skip current branch and protected branches
-        if [[ "$branch" == "$CURRENT_BRANCH" ]] || [[ "$branch" =~ ^(main|master|develop|development)$ ]]; then
-            continue
-        fi
-        GONE_BRANCHES+=("$line")
-    done < <(git for-each-ref --sort=committerdate --format='%(committerdate:short) %(refname:short)' refs/heads/ | while read date branch; do
-        if git branch -vv | grep "^..${branch}" | grep -q ': gone]'; then
-            echo "$date $branch"
-        fi
-    done || true)
+# Find branches where remote is gone (sorted by commit date, oldest first)
+while IFS= read -r line; do
+    # Extract just the branch name from the format output
+    branch=$(echo "$line" | awk '{print $NF}')
+    # Skip current branch and protected branches
+    if [[ "$branch" == "$CURRENT_BRANCH" ]] || [[ "$branch" =~ ^(main|master|develop|development)$ ]]; then
+        continue
+    fi
+    GONE_BRANCHES+=("$line")
+done < <(git for-each-ref --sort=committerdate --format='%(committerdate:short) %(refname:short)' refs/heads/ | while read date branch; do
+    if git branch -vv | grep "^..${branch}" | grep -q ': gone]'; then
+        echo "$date $branch"
+    fi
+done || true)
 
-    # Find branches with no unique commits vs origin/main (sorted by commit date, oldest first)
-    while IFS= read -r line; do
-        date=$(echo "$line" | awk '{print $1}')
-        branch=$(echo "$line" | awk '{print $2}')
-        
-        # Skip current branch, protected branches, and already found branches
-        if [[ "$branch" == "$CURRENT_BRANCH" ]] || [[ "$branch" =~ ^(main|master|develop|development)$ ]]; then
-            continue
-        fi
-        
-        # Skip if already in GONE_BRANCHES
-        skip=false
-        for gone in "${GONE_BRANCHES[@]:-}"; do
-            gone_branch=$(echo "$gone" | awk '{print $NF}')
-            if [[ "$branch" == "$gone_branch" ]]; then
-                skip=true
-                break
-            fi
-        done
-        [[ "$skip" == true ]] && continue
-        
-        # Check if branch has any unique commits
-        if ! git rev-parse "$branch" &>/dev/null; then
-            continue
-        fi
-        
-        unique_commits=$(git log --oneline "$MAIN_BRANCH..$branch" 2>/dev/null | wc -l)
-        if [[ "$unique_commits" -eq 0 ]]; then
-            NO_DIFF_BRANCHES+=("$date $branch")
-        fi
-    done < <(git for-each-ref --sort=committerdate --format='%(committerdate:short) %(refname:short)' refs/heads/ || true)
-fi
-
-# Find merged remote branches and branches with merged PRs
-if [[ "$GH_AVAILABLE" == true ]]; then
-    echo -e "${CYAN}Checking for merged PRs via GitHub CLI...${NC}"
-fi
-
+# Find branches with no unique commits vs origin/main (sorted by commit date, oldest first)
 while IFS= read -r line; do
     date=$(echo "$line" | awk '{print $1}')
     branch=$(echo "$line" | awk '{print $2}')
     
-    # Skip origin/HEAD and protected branches
-    if [[ "$branch" =~ ^origin/HEAD$ ]] || [[ "$branch" =~ ^origin/(main|master|develop|development)$ ]]; then
+    # Skip current branch, protected branches, and already found branches
+    if [[ "$branch" == "$CURRENT_BRANCH" ]] || [[ "$branch" =~ ^(main|master|develop|development)$ ]]; then
         continue
     fi
     
-    # Extract branch name without origin/ prefix
-    branch_name="${branch#origin/}"
-    
-    # Check if branch has a merged PR (using gh CLI)
-    pr_merged=false
-    if [[ "$GH_AVAILABLE" == true ]]; then
-        pr_state=$(gh pr list --state all --head "$branch_name" --json state --jq '.[0].state' 2>/dev/null || echo "")
-        if [[ "$pr_state" == "MERGED" ]]; then
-            pr_merged=true
-            PR_MERGED_BRANCHES+=("$date $branch")
-            continue
+    # Skip if already in GONE_BRANCHES
+    skip=false
+    for gone in "${GONE_BRANCHES[@]:-}"; do
+        gone_branch=$(echo "$gone" | awk '{print $NF}')
+        if [[ "$branch" == "$gone_branch" ]]; then
+            skip=true
+            break
         fi
+    done
+    [[ "$skip" == true ]] && continue
+    
+    # Check if branch has any unique commits
+    if ! git rev-parse "$branch" &>/dev/null; then
+        continue
     fi
     
-    # Check if branch is merged into origin/main (only if not already found via PR)
-    if [[ "$pr_merged" == false ]]; then
-        if git branch -r --merged "$MAIN_BRANCH" 2>/dev/null | grep -q "^  ${branch}$"; then
-            MERGED_REMOTE_BRANCHES+=("$date $branch")
-        fi
+    unique_commits=$(git log --oneline "$MAIN_BRANCH..$branch" 2>/dev/null | wc -l)
+    if [[ "$unique_commits" -eq 0 ]]; then
+        NO_DIFF_BRANCHES+=("$date $branch")
     fi
-done < <(git for-each-ref --sort=committerdate --format='%(committerdate:short) %(refname:short)' refs/remotes/origin/ || true)
+done < <(git for-each-ref --sort=committerdate --format='%(committerdate:short) %(refname:short)' refs/heads/ || true)
 
-# Display results based on mode
-if [[ "$MODE" == "--remote" ]] || [[ "$MODE" == "--delete-remote" ]] || [[ "$MODE" == "--force-remote" ]]; then
-    # Only show remote branches
-    total_remote=$((${#MERGED_REMOTE_BRANCHES[@]} + ${#PR_MERGED_BRANCHES[@]}))
-    
-    if [[ ${#PR_MERGED_BRANCHES[@]} -gt 0 ]]; then
-        echo -e "${CYAN}Remote branches with merged PRs (${#PR_MERGED_BRANCHES[@]}) - sorted by commit date:${NC}"
-        for line in "${PR_MERGED_BRANCHES[@]}"; do
-            date=$(echo "$line" | awk '{print $1}')
-            branch=$(echo "$line" | awk '{print $2}')
-            echo "  $date - $branch"
-        done
-        echo ""
-    fi
-    
-    if [[ ${#MERGED_REMOTE_BRANCHES[@]} -gt 0 ]]; then
-        echo -e "${MAGENTA}Remote branches merged into origin/main (${#MERGED_REMOTE_BRANCHES[@]}) - sorted by commit date:${NC}"
-        for line in "${MERGED_REMOTE_BRANCHES[@]}"; do
-            date=$(echo "$line" | awk '{print $1}')
-            branch=$(echo "$line" | awk '{print $2}')
-            echo "  $date - $branch"
-        done
-        echo ""
-    fi
-    
-    if [[ $total_remote -eq 0 ]]; then
-        echo -e "${GREEN}No merged remote branches found that can be safely deleted.${NC}"
-    fi
-else
-    # Show local branches
-    if [[ ${#GONE_BRANCHES[@]} -gt 0 ]]; then
-        echo -e "${YELLOW}LOCAL: Remote tracking branch deleted (${#GONE_BRANCHES[@]}) - sorted by commit date:${NC}"
-        for line in "${GONE_BRANCHES[@]}"; do
-            date=$(echo "$line" | awk '{print $1}')
-            branch=$(echo "$line" | awk '{print $2}')
-            echo "  $date - $branch"
-        done
-        echo ""
-    fi
-
-    if [[ ${#NO_DIFF_BRANCHES[@]} -gt 0 ]]; then
-        echo -e "${YELLOW}LOCAL: No unique commits vs origin/main (${#NO_DIFF_BRANCHES[@]}) - sorted by commit date:${NC}"
-        for line in "${NO_DIFF_BRANCHES[@]}"; do
-            date=$(echo "$line" | awk '{print $1}')
-            branch=$(echo "$line" | awk '{print $2}')
-            echo "  $date - $branch"
-        done
-        echo ""
-    fi
-    
-    # Show remote branches
-    if [[ ${#PR_MERGED_BRANCHES[@]} -gt 0 ]]; then
-        echo -e "${CYAN}REMOTE: Branches with merged PRs (${#PR_MERGED_BRANCHES[@]}) - sorted by commit date:${NC}"
-        echo -e "${CYAN}(Use --remote, --delete-remote, or --force-remote to manage these)${NC}"
-        for line in "${PR_MERGED_BRANCHES[@]}"; do
-            date=$(echo "$line" | awk '{print $1}')
-            branch=$(echo "$line" | awk '{print $2}')
-            echo "  $date - $branch"
-        done
-        echo ""
-    fi
-    
-    if [[ ${#MERGED_REMOTE_BRANCHES[@]} -gt 0 ]]; then
-        echo -e "${MAGENTA}REMOTE: Merged into origin/main (${#MERGED_REMOTE_BRANCHES[@]}) - sorted by commit date:${NC}"
-        echo -e "${MAGENTA}(Use --remote, --delete-remote, or --force-remote to manage these)${NC}"
-        for line in "${MERGED_REMOTE_BRANCHES[@]}"; do
-            date=$(echo "$line" | awk '{print $1}')
-            branch=$(echo "$line" | awk '{print $2}')
-            echo "  $date - $branch"
-        done
-        echo ""
-    fi
+# Display results
+if [[ ${#GONE_BRANCHES[@]} -gt 0 ]]; then
+    echo -e "${YELLOW}Remote tracking branch deleted (${#GONE_BRANCHES[@]}) - sorted by commit date:${NC}"
+    for line in "${GONE_BRANCHES[@]}"; do
+        date=$(echo "$line" | awk '{print $1}')
+        branch=$(echo "$line" | awk '{print $2}')
+        echo "  $date - $branch"
+    done
+    echo ""
 fi
 
-# Combine all local branches to delete (extract just branch names)
-ALL_LOCAL_BRANCHES=()
+if [[ ${#NO_DIFF_BRANCHES[@]} -gt 0 ]]; then
+    echo -e "${YELLOW}No unique commits vs origin/main (${#NO_DIFF_BRANCHES[@]}) - sorted by commit date:${NC}"
+    for line in "${NO_DIFF_BRANCHES[@]}"; do
+        date=$(echo "$line" | awk '{print $1}')
+        branch=$(echo "$line" | awk '{print $2}')
+        echo "  $date - $branch"
+    done
+    echo ""
+fi
+
+# Combine all branches to delete (extract just branch names)
+ALL_BRANCHES=()
 if [[ ${#GONE_BRANCHES[@]} -gt 0 ]]; then
     for line in "${GONE_BRANCHES[@]}"; do
         branch=$(echo "$line" | awk '{print $NF}')
-        ALL_LOCAL_BRANCHES+=("$branch")
+        ALL_BRANCHES+=("$branch")
     done
 fi
 if [[ ${#NO_DIFF_BRANCHES[@]} -gt 0 ]]; then
     for line in "${NO_DIFF_BRANCHES[@]}"; do
         branch=$(echo "$line" | awk '{print $NF}')
-        ALL_LOCAL_BRANCHES+=("$branch")
+        ALL_BRANCHES+=("$branch")
     done
 fi
 
-# Extract remote branch names (combine both categories)
-ALL_REMOTE_BRANCHES=()
-if [[ ${#PR_MERGED_BRANCHES[@]} -gt 0 ]]; then
-    for line in "${PR_MERGED_BRANCHES[@]}"; do
-        branch=$(echo "$line" | awk '{print $NF}')
-        ALL_REMOTE_BRANCHES+=("$branch")
-    done
+if [[ ${#ALL_BRANCHES[@]} -eq 0 ]]; then
+    echo -e "${GREEN}No local branches found that can be safely deleted.${NC}"
+    exit 0
 fi
-if [[ ${#MERGED_REMOTE_BRANCHES[@]} -gt 0 ]]; then
-    for line in "${MERGED_REMOTE_BRANCHES[@]}"; do
-        branch=$(echo "$line" | awk '{print $NF}')
-        ALL_REMOTE_BRANCHES+=("$branch")
-    done
-fi
+
+echo -e "${BLUE}Total branches to clean up: ${#ALL_BRANCHES[@]}${NC}"
+echo ""
 
 # Handle deletion based on mode
 case "$MODE" in
     --delete)
-        if [[ ${#ALL_LOCAL_BRANCHES[@]} -eq 0 ]]; then
-            echo -e "${GREEN}No local branches found that can be safely deleted.${NC}"
-            exit 0
-        fi
-        echo -e "${BLUE}Total local branches to clean up: ${#ALL_LOCAL_BRANCHES[@]}${NC}"
-        echo -e "${YELLOW}Interactive deletion mode (LOCAL branches)${NC}"
-        for branch in "${ALL_LOCAL_BRANCHES[@]}"; do
-            read -p "Delete local branch '$branch'? (y/n) " -n 1 -r
+        echo -e "${YELLOW}Interactive deletion mode${NC}"
+        for branch in "${ALL_BRANCHES[@]}"; do
+            read -p "Delete branch '$branch'? (y/n) " -n 1 -r
             echo
             if [[ $REPLY =~ ^[Yy]$ ]]; then
                 git branch -D "$branch"
@@ -261,108 +142,21 @@ case "$MODE" in
         done
         ;;
     --force)
-        if [[ ${#ALL_LOCAL_BRANCHES[@]} -eq 0 ]]; then
-            echo -e "${GREEN}No local branches found that can be safely deleted.${NC}"
-            exit 0
-        fi
-        echo -e "${BLUE}Total local branches to clean up: ${#ALL_LOCAL_BRANCHES[@]}${NC}"
-        echo -e "${RED}Force deletion mode - deleting all LOCAL branches without prompting${NC}"
-        for branch in "${ALL_LOCAL_BRANCHES[@]}"; do
+        echo -e "${RED}Force deletion mode - deleting all branches without prompting${NC}"
+        for branch in "${ALL_BRANCHES[@]}"; do
             git branch -D "$branch"
             echo -e "${GREEN}✓ Deleted $branch${NC}"
         done
         ;;
-    --delete-remote)
-        if [[ ${#ALL_REMOTE_BRANCHES[@]} -eq 0 ]]; then
-            echo -e "${GREEN}No merged remote branches found that can be safely deleted.${NC}"
-            exit 0
-        fi
-        echo -e "${BLUE}Total remote branches to clean up: ${#ALL_REMOTE_BRANCHES[@]}${NC}"
-        echo -e "${YELLOW}Interactive deletion mode (REMOTE branches)${NC}"
-        echo -e "${RED}WARNING: This will delete branches on the remote server!${NC}"
-        for branch in "${ALL_REMOTE_BRANCHES[@]}"; do
-            # Extract just the branch name without origin/ prefix
-            branch_name="${branch#origin/}"
-            read -p "Delete remote branch '$branch_name' from origin? (y/n) " -n 1 -r
-            echo
-            if [[ $REPLY =~ ^[Yy]$ ]]; then
-                git push origin --delete "$branch_name"
-                echo -e "${GREEN}✓ Deleted remote branch $branch_name${NC}"
-            else
-                echo -e "${BLUE}  Skipped $branch_name${NC}"
-            fi
-        done
-        ;;
-    --force-remote)
-        if [[ ${#ALL_REMOTE_BRANCHES[@]} -eq 0 ]]; then
-            echo -e "${GREEN}No merged remote branches found that can be safely deleted.${NC}"
-            exit 0
-        fi
-        echo -e "${BLUE}Total remote branches to clean up: ${#ALL_REMOTE_BRANCHES[@]}${NC}"
-        echo -e "${RED}Force deletion mode - deleting all REMOTE branches without prompting${NC}"
-        echo -e "${RED}WARNING: This will delete branches on the remote server!${NC}"
-        read -p "Are you sure you want to delete ${#ALL_REMOTE_BRANCHES[@]} remote branches? (yes/no) " -r
-        echo
-        if [[ $REPLY == "yes" ]]; then
-            for branch in "${ALL_REMOTE_BRANCHES[@]}"; do
-                branch_name="${branch#origin/}"
-                git push origin --delete "$branch_name"
-                echo -e "${GREEN}✓ Deleted remote branch $branch_name${NC}"
-            done
-        else
-            echo -e "${BLUE}Cancelled. No remote branches were deleted.${NC}"
-        fi
-        ;;
-    --remote)
-        # Already displayed above, just show usage
-        if [[ ${#ALL_REMOTE_BRANCHES[@]} -gt 0 ]]; then
-            echo -e "${BLUE}Total remote branches: ${#ALL_REMOTE_BRANCHES[@]}${NC}"
-            echo ""
-            echo -e "${YELLOW}To delete remote branches, run with:${NC}"
-            echo "  git-cleanup-branches --delete-remote  (interactive)"
-            echo "  git-cleanup-branches --force-remote   (delete all - requires 'yes' confirmation)"
-        fi
-        ;;
     *)
-        # Default mode - show everything and usage instructions
-        total_branches=$((${#ALL_LOCAL_BRANCHES[@]} + ${#ALL_REMOTE_BRANCHES[@]}))
-        if [[ $total_branches -eq 0 ]]; then
-            echo -e "${GREEN}No branches found that can be safely deleted.${NC}"
-            exit 0
-        fi
-        
-        if [[ ${#ALL_LOCAL_BRANCHES[@]} -gt 0 ]]; then
-            echo -e "${BLUE}Total local branches: ${#ALL_LOCAL_BRANCHES[@]}${NC}"
-        fi
-        if [[ ${#ALL_REMOTE_BRANCHES[@]} -gt 0 ]]; then
-            echo -e "${BLUE}Total remote branches: ${#ALL_REMOTE_BRANCHES[@]}${NC}"
-        fi
-        echo ""
         echo -e "${YELLOW}Dry run mode (no branches deleted)${NC}"
-        echo ""
-        echo "To delete LOCAL branches, run with:"
+        echo "To delete branches, run with:"
         echo "  git-cleanup-branches --delete  (interactive)"
         echo "  git-cleanup-branches --force   (delete all)"
         echo ""
-        if [[ ${#ALL_REMOTE_BRANCHES[@]} -gt 0 ]]; then
-            echo "To delete REMOTE branches, run with:"
-            echo "  git-cleanup-branches --delete-remote  (interactive)"
-            echo "  git-cleanup-branches --force-remote   (delete all - requires 'yes' confirmation)"
-            echo ""
-        fi
-        if [[ ${#ALL_LOCAL_BRANCHES[@]} -gt 0 ]]; then
-            echo "Or delete individual LOCAL branches with:"
-            for branch in "${ALL_LOCAL_BRANCHES[@]}"; do
-                echo "  git branch -D $branch"
-            done
-        fi
-        if [[ ${#ALL_REMOTE_BRANCHES[@]} -gt 0 ]]; then
-            echo ""
-            echo "Or delete individual REMOTE branches with:"
-            for branch in "${ALL_REMOTE_BRANCHES[@]}"; do
-                branch_name="${branch#origin/}"
-                echo "  git push origin --delete $branch_name"
-            done
-        fi
+        echo "Or delete individual branches with:"
+        for branch in "${ALL_BRANCHES[@]}"; do
+            echo "  git branch -D $branch"
+        done
         ;;
 esac
